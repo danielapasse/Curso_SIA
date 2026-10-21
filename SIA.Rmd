@@ -1,0 +1,643 @@
+---
+title: "teste"
+author: "Daniela"
+date: "2026-08-17"
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+Pacotes utilizados
+```{r}
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(tidyr)
+library(EnvRtype)
+library(geodata)
+library(terra)
+```
+
+1. Criar a tabela com os dados de coordenas
+```{r}
+cidades <- data.frame(
+  env = c("Viçosa", "Janaúba", "Rio Paranaíba", "Uberlândia", "Lavras", "Diamantina"),
+  lat = c(-20.758281, -15.858748, -19.202503, -18.906490, -21.228952, -18.248321),
+  lon = c(-42.845313, -43.318529, -46.202028, -48.153500, -44.878094, -43.620587),
+  `inicio` = as.Date(c("2025-10-15", "2025-10-15", "2025-10-15", "2025-10-15", "2025-10-15", "2025-10-15")),
+  `fim` = as.Date(c("2026-03-15", "2026-03-15", "2026-03-15", "2026-03-15", "2026-03-15", "2026-03-15"))
+)
+write.csv(cidades, "Dados/dados.csv", row.names = FALSE)
+```
+
+2. (Variávies Climáticas - EnvRtype) - Extrair variáveis climáticas utilizando o pacote EnvRtype e a função get_weather
+```{r}
+#carregando a tabela com as coordenadas e datas de plantio e colheita
+data <- read.csv("Dados/dados.csv")
+
+coords <- unique(data[,c('env', 'lat', 'lon', 'inicio', 'fim')])
+
+#baixando dados climáticos (geral)
+var1 <- EnvRtype::get_weather(env.id = coords$env,
+                                lat = coords$lat,
+                                lon = coords$lon,
+                                start.day = coords$inicio,
+                                end.day = coords$fim)
+
+#selecionar dados climáticos específicos
+var2 <- EnvRtype::get_weather(env.id = coords$env,
+                                lat = coords$lat,
+                                lon = coords$lon,
+                                start.day = coords$inicio,
+                                end.day = coords$fim,
+                                variables.names = c(
+                                  "T2M","T2M_MAX","T2M_MIN","PRECTOT"
+                                ),
+                                parallel = FALSE)
+```
+
+2.1 (Variávies Climáticas - EnvRtype) - Construir um climograma, utilizando as variávies climáticas. 
+```{r}
+#resumir os dados do NASAPOWER em dados mensais
+clima_mensal <- var2 %>%
+  mutate(Mes = floor_date(ymd(YYYYMMDD), "month")) %>%
+  group_by(env, Mes) %>%
+  summarise(Precipitacao = sum(PRECTOT, na.rm = TRUE),
+            Temperatura = mean(T2M, na.rm = TRUE),
+            .groups = "drop")
+
+#nomes dos meses
+meses <- c("Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+           "Jul", "Ago", "Set", "Out", "Nov", "Dez")
+
+#ajustar precipitação e temperatura no mesmo gráfico
+fator <- max(clima_mensal$Precipitacao) / max(clima_mensal$Temperatura)
+
+#plot dos climogramas
+ggplot(clima_mensal, aes(x = Mes)) +
+  geom_col(aes(y = Precipitacao), fill = "steelblue", width = 20) +
+  geom_line(aes(y = Temperatura * fator, group = 1), color = "darkgreen", linewidth = 1.2) +
+  geom_point(aes(y = Temperatura * fator), color = "darkgreen", size = 2) +
+  scale_y_continuous(name = "Precipitação (mm)",
+                     sec.axis = sec_axis(~ . / fator, name = "Temperatura média (°C)")) +
+  scale_x_date(date_breaks = "1 month", date_labels = "%b/%y") +
+  facet_wrap(~ env, ncol = 2) +
+  labs(x = "Mês") +
+  theme_minimal(base_size = 12) +
+  theme(strip.text = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+```
+
+2.2 (Variávies Climáticas - EnvRtype) - Indicadores ambientais para cada local, contabilizando dias secos e dias quentes.
+```{r}
+#utilizar as variáveis extraídas para identificar número de dias com temperatura máxima acima de 32°C e o maior número de dias sem chuva
+indicadores <- var2 %>%
+  group_by(env) %>%
+  summarise(Chuva = sum(PRECTOT, na.rm = TRUE),
+            T_media = mean(T2M, na.rm = TRUE),
+            Tmax_media = mean(T2M_MAX, na.rm = TRUE),
+            dias_acima_32 = sum(T2M_MAX > 32, na.rm = TRUE),
+            maior_periodo_seco = with(rle(PRECTOT < 1), max(c(0, lengths[values]))))
+
+#construir um gráfico para visualizar os dados extraídos na etapa anterior
+indicadores1 <- indicadores %>%
+  select(env, dias_acima_32, maior_periodo_seco) %>%
+  pivot_longer(cols = -env, names_to = "Indicador", values_to = "Dias") %>%
+  mutate(Indicador = recode(Indicador,
+                            "dias_acima_32" = "Dias com temperatura > 32°C",
+                            "maior_periodo_seco" = "Maior período de seca"))
+
+#plot contabilizando dias secos e dias quentes 
+ggplot(indicadores1, aes(x = env, y = Dias, fill = Indicador)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  geom_text(aes(label = Dias),
+            position = position_dodge(width = 0.8),
+            vjust = -0.4, size = 3.5) +
+  scale_fill_manual(values = c(
+    "Dias com temperatura > 32°C" = "firebrick",
+    "Maior período de seca" = "goldenrod"
+  )) +
+  labs(x = NULL, y = "Número de dias", fill = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top",
+        panel.grid.minor = element_blank())
+```
+
+2.3 (Variávies Climáticas - EnvRtype) - Visualização estresse térmico
+```{r}
+#resumir os dados ambientais em semanas
+clima_semanal <- var2 %>%
+  group_by(env) %>%
+  mutate(Data = ymd(YYYYMMDD),
+         Semana = floor(as.numeric(Data - min(Data)) / 7) + 1) %>%
+  group_by(env, Semana) %>%
+  summarise(Tmax = max(T2M_MAX, na.rm = TRUE),
+            Chuva = sum(PRECTOT, na.rm = TRUE),
+            .groups = "drop")
+
+#definir classificações para faixas de temperatura
+clima_semanal <- clima_semanal %>%
+  mutate(Classe = case_when(
+    Tmax < 28 ~ "Amena",
+    Tmax < 32 ~ "Elevada",
+    Tmax >= 32 ~ "Muito elevada"
+  ))
+
+#plot heatmap de temperatura
+ggplot(clima_semanal, aes(x = Semana, y = env, fill = Classe)) +
+  geom_tile(color = "white", linewidth = 1) +
+  scale_fill_manual(values = c("Amena" = "seagreen3",
+                               "Elevada" = "orange",
+                               "Muito elevada" = "firebrick")) +
+  labs(x = "Semana do período", y = NULL, fill = "Temperatura") +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+
+#plot heatmap de precipitação
+ggplot(clima_semanal, aes(x = Semana, y = env, fill = Chuva)) +
+  geom_tile(color = "white", linewidth = 1) +
+  scale_fill_gradient(low = "white", high = "steelblue") +
+  labs(x = "Semana do período", y = NULL, fill = "Chuva (mm)") +
+  theme_minimal() +
+  theme(panel.grid = element_blank())
+
+```
+
+3. Extrair variáveis climáticas utilizando o pacote geodata e a função soil_world
+```{r}
+#utilizando o pacote geodata para baixar os arquivos raster
+geodata::soil_world(var = 'silt', depth = 15, stat = 'mean', path = 'Rasters1') #silte
+geodata::soil_world(var = 'sand', depth = 15, stat = 'mean', path = 'Rasters1') #areia
+geodata::soil_world(var = 'clay', depth = 15, stat = 'mean', path = 'Rasters1') #argila
+geodata::soil_world(var = 'soc', depth = 15, stat = 'mean', path = 'Rasters1') #carbono orgânico
+geodata::soil_world(var = 'phh2o', depth = 15, stat = 'mean', path = 'Rasters1') #ph
+geodata::soil_world(var = 'nitrogen', depth = 15, stat = 'mean', path = 'Rasters1') #nitrogênio
+geodata::soil_world(var = 'ocd', depth = 15, stat = 'mean', path = 'Rasters1') 
+geodata::soil_world(var = 'bdod', depth = 15, stat = 'mean', path = 'Rasters1') 
+geodata::soil_world(var = 'cec', depth = 15, stat = 'mean', path = 'Rasters1')
+
+
+#obtenção de dados de elevação
+geodata::elevation_30s(country = 'BRA', path = 'Rasters1')
+
+#uso da função extract_GIS do pacote EnvRtype para extrair os dados correspondentes as coordenadas
+rastlist <- list.files(path = 'Rasters1/soil_world', pattern = '.tif', full.names = T)
+rastlist <- c(rastlist, list.files(path = 'Rasters1', pattern = ".tif", full.names = T))
+namerasts <- c('bdod','cec','clay','nitrogen','ocd','phh2o', 'sand', 'silt', 'soc')
+
+solo <- coords
+for (i in 1:length(rastlist)){
+  raster_file <- raster::raster(rastlist[i])
+  solo <- dplyr::left_join(
+    solo,
+    EnvRtype::extract_GIS(covraster = raster_file, Latitude = 'lat',
+                          Longitude = 'lon', name.out = namerasts[i],
+                          env.data = coords, env.id = 'env')
+  )
+}
+```
+
+3.1 (Variávies edáficas - geodata) - Visualizar proporção da composição do solo 
+```{r}
+#comparar a textura do solo
+textura <- solo %>%
+  select(env, sand, silt, clay) %>%
+  pivot_longer(cols = c(sand, silt, clay),
+               names_to = "Fracao",
+               values_to = "Percentual")
+
+#renomear para nomes em português
+textura <- textura %>%
+  mutate(Fracao = recode(Fracao,
+                         sand = "Areia",
+                         silt = "Silte",
+                         clay = "Argila"))
+
+#plot com as proporções de componentes do solo
+ggplot(textura, aes(x = env, y = Percentual, fill = Fracao)) +
+  geom_col(width = 0.7) +
+  scale_fill_manual(values = c(
+    "Areia" = "#D9A066",
+    "Silte" = "#B8B8B8",
+    "Argila" = "#A6533C"
+  )) +
+  geom_text(aes(label = round(Percentual, 1)),
+            position = position_stack(vjust = 0.5),
+            size = 3.5) +
+  coord_flip() +
+  labs(x = NULL, y = "Proporção (%)", fill = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top",
+        panel.grid.minor = element_blank())
+
+```
+
+3.2 (Variávies edáficas - geodata) - Mapa com variação na proporção de argila
+```{r}
+#ler o shapfile de Minas Gerais
+mg <- vect("MG/MG_Municipios_2025.shp")
+
+#raster da argila
+argila <- rast(list.files("Rasters1/soil_world",
+                          pattern = "clay.*\\.tif$",
+                          full.names = TRUE))
+
+#deixar Minas no mesmo sistema de coordenadas do raster
+mg <- project(mg, crs(argila))
+
+#recortar o raster
+argila_mg <- crop(argila, mg, mask = TRUE)
+
+#colocar as 6 localidades no mapa
+pontos <- vect(coords, geom = c("lon", "lat"), crs = "EPSG:4326")
+pontos <- project(pontos, crs(argila_mg))
+
+#plotar o mapa
+cores <- colorRampPalette(c("lightyellow", "orange", "red4"))(20)
+plot(argila_mg, col = cores,
+     main = NULL,
+     plg = list(title = "Argila (%)"))
+
+plot(mg, add = TRUE, border = "black")
+points(pontos, pch = 21, bg = "black", cex = 1.2)
+text(pontos, labels = coords$env, pos = 4, cex = 0.7)
+```
+
+Aqui entra uma parte do código em que será realizado várias etapas, com a finalidade de se obter ao final um mapa de similaridade ambiental entre os 6 pontos amostrados 
+Extrair as variáveis ambientais e edáficas para os ambientes testados
+```{r}
+#processando as variáveis ambientais de temperatura
+var1 <- EnvRtype::param_temperature(env.data = var1, Tbase1 = 8, Tbase2 = 38, Topt1 = 20, Topt2 = 30 , merge = T)
+
+#processando as variáveis ambientais de radiação
+var1 <- EnvRtype::param_radiation(env.data = var1, merge = T)
+
+#processando as variáveis ambientais da atmosfera
+var1 <- EnvRtype::param_atmospheric(env.data = var1, merge = T)
+
+#calculando o efeito da eficiência no uso da radiação (Apêndice 2, Costa-Neto, 2021)
+var1$SRAD <- var1$ALLSKY_SFC_LW_DW - var1$ALLSKY_SFC_SW_DWN
+
+#mesclar os data frames que contem as variáveis ambientais com as variáveis edáficas
+var1 = left_join(var1, solo[,-(2:5)], by = c('env'))
+saveRDS(var1, file = "Saves/var1.RDS")
+rm(list=ls())
+
+```
+
+
+Obter coordenadas para ambientes não testados
+```{r}
+library(raster)
+library(sf)
+library(spatstat)
+library(geodata)
+
+#carregar o arquivo shapefile de Minas Gerais
+mg_mun <- raster::shapefile('MG/MG_Municipios_2025.shp')
+mg_mun.sf <- sf::st_as_sf(mg_mun)
+
+#extrair as coordenadas para Minas Gerais
+mg_raster <- raster::raster('MG/90m_MG.tif')
+mun <- mg_mun
+mun.sf <- mg_mun.sf
+mun_coords <- list()
+
+set.seed(100)
+
+for (i in mun$NM_MUN) {
+    # Selecionar município
+    municipio <- mun[mun$NM_MUN == i, ]
+    # Recortar o raster para o município
+    raster_mun <- raster::crop(mg_raster, municipio)
+    # Extrair coordenadas somente da região do município
+    coord <- as.data.frame(raster::coordinates(raster_mun))
+    colnames(coord) <- c('x', 'y')
+    # Criar pontos do polígono municipal
+    municipio.sf <- mun.sf[mun.sf$NM_MUN == i, ]
+    # Filtrar pontos dentro do município
+    pontos.sf <- sf::st_as_sf(
+        coord,
+        coords = c('x', 'y'),
+        crs = raster::crs(mg_raster),
+        remove = FALSE
+    )
+    pontos.sf <- sf::st_transform(
+        pontos.sf,
+        sf::st_crs(municipio.sf)
+    )
+    dentro <- lengths(
+        sf::st_intersects(pontos.sf, municipio.sf)
+    ) > 0
+    coord <- coord[dentro, ]
+    if (nrow(coord) < 5) {
+        cat('Menos de 5 pontos em', i, '\n')
+        next
+    }
+    # Selecionar 5 pontos aleatórios
+    coord <- dplyr::slice_sample(coord, n = 5)
+    coord$mun <- i
+    coord$country <- 'Minas Gerais'
+    mun_coords[[i]] <- coord
+    rm(coord, pontos.sf, dentro, raster_mun)
+    cat('Eu estou em', i, '-', 'Minas Gerais', '\n')
+}
+# Unir os pontos    
+mun.xy = do.call(rbind, mun_coords)
+colnames(mun.xy) = c('lon', 'lat', 'mun', 'country') ##
+
+# Criar identificação
+amostra <- mun.xy
+amostra$env <- paste0("P", seq_len(nrow(amostra)))
+#amostra = readRDS("Saves/amostra.RDS")
+saveRDS(amostra, file = "Saves/amostra.RDS")
+#save.image("GIS_FA.RData")
+```
+
+Loop para coletar os dados ambientais dos pontos não amostrados
+```{r}
+# Carregar função modificada
+source("https://raw.githubusercontent.com/saulo-chaves/May_b_useful/main/get_weather2")
+
+#lista para armazenar os blocos
+blocos <- list()
+tamanho_bloco <- 50
+n_blocos <- ceiling(nrow(amostra) / tamanho_bloco)
+
+#loop para processar os blocos
+for (i in 1:n_blocos) {
+  ini <- ((i - 1) * tamanho_bloco + 1)
+  fim <- min(i * tamanho_bloco, nrow(amostra))
+  
+  cat("▶️ Bloco", i, "(", ini, "a", fim, ")\n")
+  
+  tryCatch({
+    bloco = get_weather2(env.id = amostra$env[ini:fim], lat = amostra$lat[ini:fim],
+                           lon = amostra$lon[ini:fim],  start.year = '2025', 
+                           end.year = '2026', parallel = T)
+    
+    saveRDS(bloco, file = paste0("Saves/bloco_", i, ".RDS"))
+    blocos[[i]] <- bloco
+    Sys.sleep(5)  
+    
+  }, error = function(e) {
+    message("⚠️ Erro no bloco ", i, ": ", conditionMessage(e))
+  })
+}
+
+#juntar todos os blocos
+rds <- list.files(path = "Saves", pattern = "^bloco_\\d+\\.RDS$", full.names = TRUE)
+lista_blocos <- lapply(rds, readRDS)
+covar_pred <- dplyr::bind_rows(lista_blocos)
+
+
+#extrair coordenadas únicas por ambiente
+coord_alt <- covar_pred |>
+  dplyr::distinct(env, LAT, LON)
+
+#extrair a altitude de cada ponto
+altitudes = EnvRtype::extract_GIS(covraster = raster('MG/90m_MG.tif'),
+                                    Latitude = 'LAT', name.out = 'ALT', 
+                                    Longitude = 'LON', env.data = coord_alt, 
+                                    env.id = 'env')
+#juntar o dataset completo
+covar_pred <- dplyr::left_join(covar_pred, altitudes, by = "env")
+covar_pred <- covar_pred |>
+  dplyr::select(-LAT.y, -LON.y) |>
+  dplyr::rename(LAT = LAT.x, LON = LON.x) |>
+  dplyr::relocate(ALT, .after = LAT) 
+
+saveRDS(covar_pred, file = "Saves/covar_pred.RDS")
+
+```
+
+
+Extrair as variáveis climáticas e edáficas para os ambientes não testados
+```{r}
+#função modificada do get_weather
+source("https://raw.githubusercontent.com/saulo-chaves/May_b_useful/main/get_weather2")
+
+#extrair as variáveis ambientais, médias mensais, para os ambientes não testados
+covar_pred = get_weather2(env.id = amostra$env[1:50], lat = amostra$lat[1:50],
+                           lon = amostra$lon[1:50],  start.year = '2025', 
+                           end.year = '2026', parallel = T)
+#extrair a altitude de cada ponto
+covar_pred = EnvRtype::extract_GIS(covraster = raster('MG/90m_MG.tif'),
+                                    Latitude = 'LAT', name.out = 'ALT', 
+                                    Longitude = 'LON', env.data = covar_pred, 
+                                    env.id = 'env')
+
+#parâmetros de temperatura para a cultura
+Tfun = c(8, 38, 20, 30)
+names(Tfun) = c('Tbase1', 'Tbase2', 'Topt1', 'Topt2')
+
+covar_pred <- covar_pred |>
+  dplyr::mutate(
+    OCT = dplyr::if_else(YEAR == 2025, OCT, NA_real_),
+    NOV = dplyr::if_else(YEAR == 2025, NOV, NA_real_),
+    DEC = dplyr::if_else(YEAR == 2025, DEC, NA_real_),
+    JAN = dplyr::if_else(YEAR == 2026, JAN, NA_real_),
+    FEB = dplyr::if_else(YEAR == 2026, FEB, NA_real_),
+    MAR = dplyr::if_else(YEAR == 2026, MAR, NA_real_)
+  )
+
+covar_pred <- covar_pred |>
+  dplyr::group_by(env, PARAMETER) |>
+  dplyr::summarise(
+    dplyr::across(
+      c(OCT, NOV, DEC, JAN, FEB, MAR),
+      ~ if (all(is.na(.x))) NA_real_ else mean(.x, na.rm = TRUE)
+    ),
+    LON = dplyr::first(LON),
+    LAT = dplyr::first(LAT),
+    ALT = dplyr::first(ALT),
+    .groups = "drop"
+  )
+
+#selecionar as colunas de interesse
+covar_pred = covar_pred |> dplyr::select(env, ALT, LON, LAT, PARAMETER,
+                                           OCT, NOV, DEC, JAN, FEB, MAR) |> 
+  tidyr::pivot_longer(cols = OCT:MAR, names_to = 'MONTH') |>
+  tidyr::pivot_wider(names_from = PARAMETER, values_from = value) |> 
+  dplyr::mutate(
+    T2RANGE = T2M_MAX - T2M_MIN
+  ) |> 
+  #calcular variáveis derivadas
+  dplyr::mutate(
+    #fator redutor da eficiência de uso da radiação (RUE)
+    FRUE = F.RUE.Temperature(Tbase1 = Tfun['Tbase1'], Tmed = T2M, 
+                             Tbase2 = Tfun['Tbase2'], Topt1 = Tfun['Topt1'], 
+                             Topt2 = Tfun['Topt2']),
+    #graus-dia
+    GDD = ((adjust_for_Tbase2(adjust_for_Tbase(T2M_MAX, Tfun['Tbase1']), 
+                              Tfun['Tbase2']) + 
+              adjust_for_Tbase2(adjust_for_Tbase(T2M_MIN, Tfun['Tbase1']), 
+                                Tfun['Tbase2']))/2 - 
+             Tfun['Tbase1']),
+    #déficit de pressão de vapor
+    VPD = ((teten(T2M_MIN) + teten(T2M_MAX)/2)) - teten(T2MDEW),
+    #parâmetro da equação de Penman-Monteith (usado na ETP)
+    SPV = 4098 * (0.6108 * exp((17.27 * T2M)/(T2M + 237.3)))/(T2M + 237.2)^2
+  ) |> 
+  dplyr::mutate(
+    ETP = EToPT(alfa = 1.26, Srad = ALLSKY_SFC_SW_DWN, slope = SPV, 
+                psyc = psyco(AtmP(elevation = ALT)))
+  ) |> 
+  dplyr::mutate(PETP = PRECTOTCORR - ETP)
+
+#extrair as variáveis edáficas
+rastlist = list.files(path = 'Rasters1/soil_world', pattern = '.tif', full.names = T)
+namerasts = c('bdod', 'cec', 'cfvo', 'clay', 'nitrogen', 'ocd', 'phh2o', 'sand', 'silt', 'soc')
+solo = data.frame(amostra)
+for(i in 1:length(rastlist)){
+  raster_file <- raster::raster(rastlist[i])
+  solo <- dplyr::left_join(
+    solo,
+    EnvRtype::extract_GIS(covraster = raster_file, Latitude = 'lat', 
+                          Longitude = 'lon', name.out = namerasts[i], 
+                          env.data = data.frame(amostra), 
+                          env.id = 'env'),
+    by = c("env","lon", "lat", "mun", "country")
+    )
+}
+
+#combinar os dataframes de variáveis ambientais e edáficas
+covar_pred = merge(covar_pred, solo)
+
+covar_pred = covar_pred |> dplyr::select(-lon, -lat) |> 
+  dplyr::relocate(country, mun, .before = env) |> 
+  dplyr::relocate(MONTH, ALT, LON, LAT, .before = T2M)
+
+save.image("GIS_FA.RData")
+saveRDS(covar_pred, file = "Dados/covar_pred.RDS")
+write.csv(covar_pred, file = "Dados/covar_pred.csv",row.names = FALSE)
+rm(list=ls())
+
+```
+
+
+Construir as matrizes com cada variável ambiental para cada ambiente
+```{r}
+library(pdist)
+#carregar os arquivos RDS salvos anteriormente
+covar = readRDS("Saves/var1.RDS")
+covar_pred = readRDS("Saves/covar_pred.RDS")
+
+#matriz dos ambientes observados
+matcovar = subset(covar, select = c(-DOY, -YYYYMMDD, 
+                                         -daysFromStart, -n, -N, -RTA))
+matcovar = matcovar |> 
+  dplyr::reframe(across(LON:soc, mean), .by = 'env')
+matcovar = tibble::column_to_rownames(matcovar, var = 'env')
+
+#matriz dos ambientes não observados
+covar_pred = covar_pred |> 
+  dplyr::filter(YEAR != 2025 | !MONTH %in% c('OCT', 'NOV', 'DEC')) |> 
+  dplyr::filter(YEAR != 2026 | !MONTH %in% c('JAN', 'FEB', 'MAR')) |> 
+  dplyr::select(-YEAR, -MONTH) |> 
+  dplyr::reframe(across(ALT:soc, mean), .by = c(mun, env)) |>
+  dplyr::rename(T2M_RANGE = T2RANGE, PRECTOT = PRECTOTCORR)
+
+#ambientes observados
+matcovar = matcovar[, sort(colnames(matcovar))]
+
+#pontos amostrados
+matcovar_pred = covar_pred |> 
+  tibble::column_to_rownames('env') |> 
+  dplyr::select(-mun)
+matcovar_pred = matcovar_pred[, sort(colnames(matcovar_pred))]
+matcovar_pred = as.matrix(matcovar_pred)
+
+#verificar se as matrizes possuem a mesma ordem de colunas
+common_cols <- colnames(matcovar)[tolower(colnames(matcovar)) %in% tolower(colnames(matcovar_pred))]
+
+matcovar     <- matcovar[, common_cols, drop = FALSE]
+matcovar_pred <- matcovar_pred[, match(tolower(common_cols), tolower(colnames(matcovar_pred))), drop = FALSE]
+
+all(tolower(colnames(matcovar_pred)) == tolower(colnames(matcovar)))
+```
+
+
+Cálculo da distância euclidiana, interpolação e plot do mapa de similaridade ambiental
+```{r}
+#calcular distância euclidiana
+eucl = as.matrix(pdist::pdist(scale(matcovar), scale(matcovar_pred)))
+rownames(eucl) = rownames(matcovar)
+colnames(eucl) = rownames(matcovar_pred)
+
+dist.env = lapply(apply(eucl, 1, function(x) reshape2::melt(x)), 
+       function(x) x |> 
+         dplyr::rename(dist = value) |> 
+         tibble::rownames_to_column('point') |> 
+         dplyr::left_join(covar_pred[,c('env', 'LON', 'LAT')], 
+                   by = c('point' = 'env')))
+#rm(eucl)
+
+#definir uma janela de observação 
+moz_m = raster::shapefile("~/UFV - git/Envirotyping/Mapa/MOZ/gadm41_MOZ_1.shp") #ALTERAÇÃO DE 2 PARA 1 NO MOZ
+mozsf = sf::st_as_sf(moz_m)
+
+obs_window = spatstat.geom::owin(xrange = moz_m@bbox[1,], yrange = moz_m@bbox[2,])
+
+cl = parallel::makeCluster(parallel::detectCores(logical = F)-1)
+parallel::clusterEvalQ(cl, {library(spatstat)
+                            library(raster) 
+                            library(sf)})
+parallel::clusterExport(cl, varlist = c('obs_window', 'mozsf'))
+
+dist.list = parallel::parLapply(cl = cl, dist.env, function(x){
+  
+  ppp_test = spatstat.geom::ppp(x = x$LON, y = x$LAT, 
+                 marks = x$dist, window = obs_window)
+  
+  powers <- seq(0.1, 5, 0.1)
+  mse_result <- NULL
+  for(power in powers){
+    CV_idw <- spatstat.explore::idw(ppp_test, power=power, at="points")
+    mse_result <- c(mse_result, mean((ppp_test$marks-CV_idw)^2, na.rm=T))
+  }
+  optimal_power <- powers[which.min(mse_result)]
+  
+  tr_idw = spatstat.explore::idw(ppp_test, power = optimal_power, at = 'pixels')
+  
+  idw_raster = as(raster::mask(raster::raster(tr_idw, crs = crs(moz_m)), mozsf), 
+                  "SpatialPixelsDataFrame")
+  
+  idw_raster.df = as.data.frame(idw_raster)
+})
+parallel::stopCluster(cl)
+#rm(cl)
+#save(dist.list, file = 'Saves/dist_list.RData')
+
+#calcular similaridade ambiental
+mindist = apply(do.call(cbind, lapply(dist.list, function(x) x[,-c(2,3)])), 
+                1, function(x) x[which.min(x)])
+
+#mapa ilustrativo
+library(ggspatial)
+cbind(dist.list$Gurue[,-1],
+      layer = abs((mindist - min(mindist))/(max(mindist) - min(mindist))-1)) |>
+ggplot() + 
+  ggspatial::annotation_scale(location = "bl", width_hint = 0.3) +
+  ggspatial::annotation_north_arrow(location = "bl", which_north = "true",
+                         pad_x = unit(0.5,"cm"), pad_y = unit(0.7,"cm"),
+                         style = ggspatial::north_arrow_nautical())+ 
+  geom_raster(aes(x = x, y = y , fill = layer), interpolate = T) +
+  geom_sf(data = mozsf, fill = NA, linewidth = 1, color = "black")  + 
+  labs(x = 'Longitude', y = 'Latitude', fill = 'Environmental \n similarity') + 
+  scale_fill_viridis_c(option = 'turbo', direction = 1, 
+                       limits = c(0, 1)) + 
+  theme(legend.position = 'right') + 
+  geom_point(
+    data = data.frame("lat" = c(-15.4748, -19.40955,-15.65777,-24.73333,
+                                -24.36696,-26.07991),
+                      "lon" = c(36.96750, 33.28355, 37.69749, 33.53333, 
+                                35.18242,32.35600)),
+    aes(x = lon, y = lat, size = 1), show.legend = F, color = 'black',
+  ) 
+
+
+rm(dist.list, dist.env)
+```
+
+

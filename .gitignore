@@ -1,0 +1,18 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+# Resultados das análises
+*.RData
+*.RDA
+*.RDS
+*.rds
+
+# Arquivos raster
+*.tif
+*.tiff
+
+# Arquivos temporários do RStudio
+.Rhistory
+.Rproj.user/

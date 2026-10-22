@@ -1,7 +1,7 @@
 ---
-title: "teste"
+title: "Curso SIA - EXTRAÇÃO E USO DE VARIÁVEIS AMBIENTAIS A PARTIR DE BANCOS DE DADOS PÚBLICOS"
 author: "Daniela"
-date: "2026-08-17"
+date: "2026-10-23"
 output:
   word_document: default
   html_document: default
@@ -218,7 +218,6 @@ for (i in 1:length(rastlist)){
                           env.data = coords, env.id = 'env')
   )
 }
-
 ```
 
 3.1 (Variávies edáficas - geodata) - Visualizar proporção da composição do solo 
@@ -366,7 +365,6 @@ colnames(mun.xy) = c('lon', 'lat', 'mun', 'country') ##
 #criar identificação
 amostra <- mun.xy
 amostra$env <- paste0("P", seq_len(nrow(amostra)))
-saveRDS(amostra, file = "Saves/amostra.RDS")
 ```
 
 Loop para coletar os dados ambientais dos pontos não amostrados
@@ -505,19 +503,11 @@ covar_pred = merge(covar_pred, solo_pred)
 covar_pred = covar_pred |> dplyr::select(-lon, -lat) |> 
   dplyr::relocate(country, mun, .before = env) |> 
   dplyr::relocate(MONTH, ALT, LON, LAT, .before = ALLSKY_SFC_LW_DWN)
-
-saveRDS(covar_pred, file = "Saves/covar_pred.RDS")
-#rm(list=ls())
-
 ```
 
 
 Construir as matrizes com cada variável ambiental para cada ambiente
 ```{r}
-#carregar os arquivos RDS salvos anteriormente
-covar = readRDS("Saves/covar.RDS")
-covar_pred = readRDS("Saves/covar_pred.RDS")
-
 #matriz dos ambientes observados
 matcovar = subset(covar, select = c(-DOY, -YYYYMMDD, 
                                          -daysFromStart, -n, -N, -RTA))
@@ -665,6 +655,5 @@ ggplot() +
       lon = c(-42.845313, -43.318529, -46.202028, -48.1535, -44.878094, -43.620587),
       cidade = c("Viçosa", "Janaúba", "Rio Paranaíba", "Uberlândia", "Lavras", "Diamantina")),
     aes(x = lon, y = lat, label = cidade), size = 3, hjust = -0.2, color = "black")
-
 ```
 

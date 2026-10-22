@@ -9,7 +9,6 @@ output:
 ---
 Pacotes utilizados
 ```{r}
-install.packages("rlang")
 #baixar os pacotes que serão utilizados
 install.packages(c(
   "dplyr",
@@ -43,14 +42,14 @@ library(ggspatial)
 
 1. Criar a tabela com os dados de coordenas
 ```{r}
-cidades <- data.frame(
+dados <- data.frame(
   env = c("Viçosa", "Janaúba", "Rio Paranaíba", "Uberlândia", "Lavras", "Diamantina"),
   lat = c(-20.758281, -15.858748, -19.202503, -18.906490, -21.228952, -18.248321),
   lon = c(-42.845313, -43.318529, -46.202028, -48.153500, -44.878094, -43.620587),
   `inicio` = as.Date(c("2025-10-15", "2025-10-15", "2025-10-15", "2025-10-15", "2025-10-15", "2025-10-15")),
   `fim` = as.Date(c("2026-03-15", "2026-03-15", "2026-03-15", "2026-03-15", "2026-03-15", "2026-03-15"))
 )
-write.csv(cidades, "Dados/dados.csv", row.names = FALSE)
+write.csv(dados, "Dados/dados.csv", row.names = FALSE)
 ```
 
 2. (Variávies Climáticas - EnvRtype) - Extrair variáveis climáticas utilizando o pacote EnvRtype e a função get_weather
@@ -124,8 +123,8 @@ indicadores <- var2 %>%
 
 #construir um gráfico para visualizar os dados extraídos na etapa anterior
 indicadores1 <- indicadores %>%
-  select(env, dias_acima_32, maior_periodo_seco) %>%
-  pivot_longer(cols = -env, names_to = "Indicador", values_to = "Dias") %>%
+  dplyr::select(env, dias_acima_32, maior_periodo_seco) %>%
+  tidyr::pivot_longer(cols = -env, names_to = "Indicador", values_to = "Dias") %>%
   mutate(Indicador = recode(Indicador,
                             "dias_acima_32" = "Dias com temperatura > 32°C",
                             "maior_periodo_seco" = "Maior período de seca"))
@@ -162,7 +161,7 @@ clima_semanal <- var2 %>%
 clima_semanal <- clima_semanal %>%
   mutate(Classe = case_when(
     Tmax < 28 ~ "Amena",
-    Tmax < 32 ~ "Elevada",
+    Tmax >= 28 & Tmax < 32 ~ "Elevada",
     Tmax >= 32 ~ "Muito elevada"
   ))
 
@@ -172,7 +171,8 @@ ggplot(clima_semanal, aes(x = Semana, y = env, fill = Classe)) +
   scale_fill_manual(values = c("Amena" = "seagreen3",
                                "Elevada" = "orange",
                                "Muito elevada" = "firebrick")) +
-  labs(x = "Semana do período", y = NULL, fill = "Temperatura") +
+  labs(x = "Semana do período", y = NULL, fill = "Temperatura (°C)") +
+  coord_fixed(ratio = 1) +
   theme_minimal() +
   theme(panel.grid = element_blank())
 
@@ -181,33 +181,33 @@ ggplot(clima_semanal, aes(x = Semana, y = env, fill = Chuva)) +
   geom_tile(color = "white", linewidth = 1) +
   scale_fill_gradient(low = "white", high = "steelblue") +
   labs(x = "Semana do período", y = NULL, fill = "Chuva (mm)") +
+  coord_fixed(ratio = 1) +
   theme_minimal() +
   theme(panel.grid = element_blank())
-
 ```
 
 3. Extrair variáveis climáticas utilizando o pacote geodata e a função soil_world
 ```{r}
 #utilizando o pacote geodata para baixar os arquivos raster
+#OBS*: como os arquivos raster são pesados e seu dowlond demora um tempo para ser feito, esse processo já foi feito anteriormente, não sendo necessário rodar esse bloco
 geodata::soil_world(var = 'silt', depth = 15, stat = 'mean', path = 'Rasters1') #silte
 geodata::soil_world(var = 'sand', depth = 15, stat = 'mean', path = 'Rasters1') #areia
 geodata::soil_world(var = 'clay', depth = 15, stat = 'mean', path = 'Rasters1') #argila
 geodata::soil_world(var = 'soc', depth = 15, stat = 'mean', path = 'Rasters1') #carbono orgânico
 geodata::soil_world(var = 'phh2o', depth = 15, stat = 'mean', path = 'Rasters1') #ph
 geodata::soil_world(var = 'nitrogen', depth = 15, stat = 'mean', path = 'Rasters1') #nitrogênio
-geodata::soil_world(var = 'ocd', depth = 15, stat = 'mean', path = 'Rasters1') 
-geodata::soil_world(var = 'bdod', depth = 15, stat = 'mean', path = 'Rasters1') 
-geodata::soil_world(var = 'cec', depth = 15, stat = 'mean', path = 'Rasters1')
+geodata::soil_world(var = 'ocd', depth = 15, stat = 'mean', path = 'Rasters1') #densidade de carbono orgânico do solo
+geodata::soil_world(var = 'bdod', depth = 15, stat = 'mean', path = 'Rasters1') #densidade do solo
+geodata::soil_world(var = 'cec', depth = 15, stat = 'mean', path = 'Rasters1') #capacidade de troca catiÔnica (CTC)
 
 
 #obtenção de dados de elevação
 geodata::elevation_30s(country = 'BRA', path = 'Rasters1')
 
 #uso da função extract_GIS do pacote EnvRtype para extrair os dados correspondentes as coordenadas
-rastlist <- list.files(path = 'Rasters1/soil_world', pattern = '.tif', full.names = T)
-rastlist <- c(rastlist, list.files(path = 'Rasters1', pattern = ".tif", full.names = T))
-namerasts <- c('bdod','cec','clay','nitrogen','ocd','phh2o', 'sand', 'silt', 'soc')
-
+rastlist <- list.files(path = 'Rasters1/elevation', pattern = '\\.tif$', full.names = T)
+rastlist <- c(rastlist, list.files(path = 'Rasters1/soil_world', pattern = '\\.tif$', full.names = T))
+namerasts <- c('altitude','bdod','cec','clay','nitrogen','ocd','phh2o','sand','silt','soc')
 solo <- coords
 for (i in 1:length(rastlist)){
   raster_file <- raster::raster(rastlist[i])
@@ -218,14 +218,17 @@ for (i in 1:length(rastlist)){
                           env.data = coords, env.id = 'env')
   )
 }
+
 ```
 
 3.1 (Variávies edáficas - geodata) - Visualizar proporção da composição do solo 
 ```{r}
+#carregar o objeto contendo os dados de solo
+solo = readRDS("Saves/solo.RDS")
 #comparar a textura do solo
 textura <- solo %>%
-  select(env, sand, silt, clay) %>%
-  pivot_longer(cols = c(sand, silt, clay),
+  dplyr::select(env, sand, silt, clay) %>%
+  tidyr::pivot_longer(cols = c(sand, silt, clay),
                names_to = "Fracao",
                values_to = "Percentual")
 
@@ -252,7 +255,6 @@ ggplot(textura, aes(x = env, y = Percentual, fill = Fracao)) +
   theme_minimal(base_size = 12) +
   theme(legend.position = "top",
         panel.grid.minor = element_blank())
-
 ```
 
 3.2 (Variávies edáficas - geodata) - Mapa com variação na proporção de argila
@@ -286,7 +288,8 @@ points(pontos, pch = 21, bg = "black", cex = 1.2)
 text(pontos, labels = coords$env, pos = 4, cex = 0.7)
 ```
 
-Aqui entra uma parte do código em que será realizado várias etapas, com a finalidade de se obter ao final um mapa de similaridade ambiental entre os 6 pontos amostrados 
+Aqui entra uma parte do código em que será realizado várias etapas, com a finalidade de se obter ao final um mapa de similaridade ambiental entre os 6 pontos amostrados. Como o processamento de várias dessas etapas demandam muito tempo de processamento, os blocos abaixo NÃO serão exexcutados.
+
 Extrair as variáveis ambientais e edáficas para os ambientes testados
 ```{r}
 #processando as variáveis ambientais de temperatura
@@ -303,7 +306,6 @@ var1$SRAD <- var1$ALLSKY_SFC_LW_DW - var1$ALLSKY_SFC_SW_DWN
 
 #mesclar os data frames que contem as variáveis ambientais com as variáveis edáficas
 var1 = left_join(var1, solo[,-(2:5)], by = c('env'))
-saveRDS(var1, file = "Saves/var1.RDS")
 ```
 
 
@@ -349,7 +351,7 @@ for (i in mun$NM_MUN) {
         cat('Menos de 5 pontos em', i, '\n')
         next
     }
-    # Selecionar 5 pontos aleatórios
+    #aelecionar 5 pontos aleatórios por município
     coord <- dplyr::slice_sample(coord, n = 5)
     coord$mun <- i
     coord$country <- 'Minas Gerais'
@@ -357,11 +359,11 @@ for (i in mun$NM_MUN) {
     rm(coord, pontos.sf, dentro, raster_mun)
     cat('Eu estou em', i, '-', 'Minas Gerais', '\n')
 }
-# Unir os pontos    
+#unir os pontos    
 mun.xy = do.call(rbind, mun_coords)
 colnames(mun.xy) = c('lon', 'lat', 'mun', 'country') ##
 
-# Criar identificação
+#criar identificação
 amostra <- mun.xy
 amostra$env <- paste0("P", seq_len(nrow(amostra)))
 saveRDS(amostra, file = "Saves/amostra.RDS")
@@ -369,7 +371,7 @@ saveRDS(amostra, file = "Saves/amostra.RDS")
 
 Loop para coletar os dados ambientais dos pontos não amostrados
 ```{r}
-# Carregar função modificada
+#carregar função modificada
 source("https://raw.githubusercontent.com/saulo-chaves/May_b_useful/main/get_weather2")
 
 #lista para armazenar os blocos
@@ -419,9 +421,6 @@ covar_pred <- covar_pred |>
   dplyr::select(-LAT.y, -LON.y) |>
   dplyr::rename(LAT = LAT.x, LON = LON.x) |>
   dplyr::relocate(ALT, .after = LAT) 
-
-saveRDS(covar_pred, file = "Saves/covar_pred.RDS")
-
 ```
 
 
@@ -516,7 +515,7 @@ saveRDS(covar_pred, file = "Saves/covar_pred.RDS")
 Construir as matrizes com cada variável ambiental para cada ambiente
 ```{r}
 #carregar os arquivos RDS salvos anteriormente
-covar = readRDS("Saves/var1.RDS")
+covar = readRDS("Saves/covar.RDS")
 covar_pred = readRDS("Saves/covar_pred.RDS")
 
 #matriz dos ambientes observados
@@ -541,6 +540,7 @@ matcovar_pred = covar_pred |>
   dplyr::select(where(is.numeric)) |>
   as.matrix()
 matcovar_pred = matcovar_pred[, sort(colnames(matcovar_pred))]
+
 #verificar se as matrizes possuem a mesma ordem de colunas
 common_cols <- colnames(matcovar)[tolower(colnames(matcovar)) %in% tolower(colnames(matcovar_pred))]
 matcovar     <- matcovar[, common_cols, drop = FALSE]
@@ -600,7 +600,6 @@ parallel::stopCluster(cl)
 #calcular similaridade ambiental
 mindist = apply(do.call(cbind, lapply(dist.list, function(x) x[,-c(2,3)])), 
                 1, function(x) x[which.min(x)])
-
 #mapa ilustrativo
 cbind(dist.list$Viçosa[,-1],
       layer = abs((mindist - min(mindist))/(max(mindist) - min(mindist))-1)) |>
@@ -616,15 +615,56 @@ ggplot() +
                        limits = c(0, 1)) + 
   theme(legend.position = 'right') + 
   geom_point(
-    data = data.frame("lat" = c(-20.758281, -15.858748,-19.202503,-18.90649,
-                                -21.228952,-18.248321),
-                      "lon" = c(-42.845313, -43.318529, -46.202028, -48.1535, 
-                                -44.878094,-43.620587)),
-    aes(x = lon, y = lat, size = 1), show.legend = F, color = 'black',
+  data = data.frame(
+    lat = c(-20.758281, -15.858748, -19.202503, -18.90649, -21.228952, -18.248321),
+    lon = c(-42.845313, -43.318529, -46.202028, -48.1535, -44.878094, -43.620587)),
+  aes(x = lon, y = lat), size = 2, color = "black") +
+  geom_text(
+    data = data.frame(
+      lat = c(-20.758281, -15.858748, -19.202503, -18.90649, -21.228952, -18.248321),
+      lon = c(-42.845313, -43.318529, -46.202028, -48.1535, -44.878094, -43.620587),
+      cidade = c("Viçosa", "Janaúba", "Rio Paranaíba", "Uberlândia", "Lavras", "Diamantina")),
+    aes(x = lon, y = lat, label = cidade), size = 3, hjust = -0.2, color = "black")
   ) 
-
-save.image("CursoSIA.RData")
-#rm(dist.list, dist.env)
 ```
 
+Esse bloco deverá ser executado durante o curso para gerar o mapa de similaridade ambiental. Aqui, foram carregados somente os arquivos necessários para a geração do mapa.
+```{r}
+#carregar objeto para construir mapa de similaridade ambiental
+dist.list = readRDS("Saves/dist.list.RDS")
+
+#carregar shapfile para plotar o mapa
+mun_m = raster::shapefile("MG0/MG_UF_2025.shp")
+munsf = sf::st_as_sf(mun_m)
+
+#calcular similaridade ambiental
+mindist = apply(do.call(cbind, lapply(dist.list, function(x) x[,-c(2,3)])), 
+                1, function(x) x[which.min(x)])
+#mapa ilustrativo
+cbind(dist.list$Viçosa[,-1],
+      layer = abs((mindist - min(mindist))/(max(mindist) - min(mindist))-1)) |>
+ggplot() + 
+  ggspatial::annotation_scale(location = "bl", width_hint = 0.3) +
+  ggspatial::annotation_north_arrow(location = "bl", which_north = "true",
+                         pad_x = unit(0.5,"cm"), pad_y = unit(0.7,"cm"),
+                         style = ggspatial::north_arrow_nautical())+ 
+  geom_raster(aes(x = x, y = y , fill = layer), interpolate = T) +
+  geom_sf(data = munsf, fill = NA, linewidth = 0.3, color = "black")  + 
+  labs(x = 'Longitude', y = 'Latitude', fill = 'Environmental \n similarity') + 
+  scale_fill_viridis_c(option = 'turbo', direction = 1, 
+                       limits = c(0, 1)) + 
+  theme(legend.position = 'right') + 
+  geom_point(
+  data = data.frame(
+    lat = c(-20.758281, -15.858748, -19.202503, -18.90649, -21.228952, -18.248321),
+    lon = c(-42.845313, -43.318529, -46.202028, -48.1535, -44.878094, -43.620587)),
+  aes(x = lon, y = lat), size = 2, color = "black") +
+  geom_text(
+    data = data.frame(
+      lat = c(-20.758281, -15.858748, -19.202503, -18.90649, -21.228952, -18.248321),
+      lon = c(-42.845313, -43.318529, -46.202028, -48.1535, -44.878094, -43.620587),
+      cidade = c("Viçosa", "Janaúba", "Rio Paranaíba", "Uberlândia", "Lavras", "Diamantina")),
+    aes(x = lon, y = lat, label = cidade), size = 3, hjust = -0.2, color = "black")
+
+```
 
